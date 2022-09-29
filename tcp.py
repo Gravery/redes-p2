@@ -38,7 +38,8 @@ class Servidor:
             conexao.own_ack_no = seq_no + 1
             # TODO: você precisa fazer o handshake aceitando a conexão. Escolha se você acha melhor
             # fazer aqui mesmo ou dentro da classe Conexao.
-            self.rede.enviar(fix_checksum(make_header(dst_port, src_port, seq_no, conexao.own_ack_no, FLAGS_SYN | FLAGS_ACK), dst_addr, src_addr), src_addr)
+            self.rede.enviar(fix_checksum(make_header(dst_port, src_port, conexao.own_seq_no, conexao.own_ack_no, FLAGS_SYN | FLAGS_ACK), dst_addr, src_addr), src_addr)
+            conexao.own_seq_no += 1
             if self.callback:
                 self.callback(conexao)
         elif id_conexao in self.conexoes:
@@ -58,6 +59,8 @@ class Conexao:
         self.recieved_seq_no = recieved_seq_no
         self.own_ack_no = self.recieved_seq_no + 1
         self.recieved_ack_no = ack_no
+        self.data_buffer = b''
+        self.awaiting_ack = False
         self.timer = asyncio.get_event_loop().call_later(1, self._exemplo_timer)  # um timer pode ser criado assim; esta linha é só um exemplo e pode ser removida
         #self.timer.cancel()   # é possível cancelar o timer chamando esse método; esta linha é só um exemplo e pode ser removida
 
@@ -74,16 +77,28 @@ class Conexao:
         print("own_ack_no: %d" % self.own_ack_no)
         print("own_seq_no: %d" % self.recieved_seq_no)
         print("recieved_seq_no2: %d" % (self.recieved_seq_no + len(payload)))
-        if seq_no == self.own_ack_no:
-            self.recieved_seq_no = seq_no
-            print("recebido segmento com seq_no correto")
-            self.callback(self, payload)
-            self.own_ack_no = seq_no + len(payload)
-            payload = b""
-            self.servidor.rede.enviar(fix_checksum(make_header(self.id_conexao[3], self.id_conexao[1], self.own_seq_no, self.own_ack_no, FLAGS_ACK) + payload, self.id_conexao[2], self.id_conexao[0]), self.id_conexao[0])
+        if FLAGS_FIN == (flags & FLAGS_FIN):
+            print("Fechamento de conexão")
+            self.own_ack_no += 1
+            self.callback(self, b"")
+            self.own_seq_no += 1
+            self.servidor.rede.enviar(
+                fix_checksum(make_header(self.id_conexao[3], self.id_conexao[1], self.own_seq_no, self.own_ack_no, FLAGS_ACK),
+                                self.id_conexao[2], self.id_conexao[0]), self.id_conexao[0])
 
-        else:
-            print("recebido segmento com seq_no errado")
+
+        if FLAGS_ACK == (flags & FLAGS_ACK) and len(payload) != 0:
+            if seq_no == self.own_ack_no:
+                self.recieved_seq_no = seq_no
+                print("recebido segmento com seq_no correto")
+                self.callback(self, payload)
+                self.own_ack_no = seq_no + len(payload)
+                self.recieved_ack_no = ack_no
+                payload = b""
+                self.servidor.rede.enviar(fix_checksum(make_header(self.id_conexao[3], self.id_conexao[1], self.own_seq_no, self.own_ack_no, FLAGS_ACK) + payload, self.id_conexao[2], self.id_conexao[0]), self.id_conexao[0])
+
+            else:
+                print("recebido segmento com seq_no errado")
         #print('recebido payload: %r' % payload)
 
     # Os métodos abaixo fazem parte da API
@@ -99,14 +114,27 @@ class Conexao:
         """
         Usado pela camada de aplicação para enviar dados
         """
+
         # TODO: implemente aqui o envio de dados.
         # Chame self.servidor.rede.enviar(segmento, dest_addr) para enviar o segmento
         # que você construir para a camada de rede.
-        pass
+
+        self.data_buffer += dados
+
+        while len(self.data_buffer) > 0:
+            payload = self.data_buffer[:MSS]
+            self.data_buffer = self.data_buffer[MSS:]
+            self.servidor.rede.enviar(fix_checksum(make_header(self.id_conexao[3], self.id_conexao[1], self.own_seq_no, self.own_ack_no, FLAGS_ACK) + payload, self.id_conexao[2], self.id_conexao[0]), self.id_conexao[0])
+            self.own_seq_no += len(payload)
+
+
+
 
     def fechar(self):
         """
         Usado pela camada de aplicação para fechar a conexão
         """
         # TODO: implemente aqui o fechamento de conexão
-        pass
+        self.servidor.rede.enviar(
+            fix_checksum(make_header(self.id_conexao[3], self.id_conexao[1], self.own_seq_no, self.own_ack_no, FLAGS_FIN),
+                         self.id_conexao[2], self.id_conexao[0]), self.id_conexao[0])
