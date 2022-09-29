@@ -81,7 +81,6 @@ class Conexao:
             print("Fechamento de conexão")
             self.own_ack_no += 1
             self.callback(self, b"")
-            self.own_seq_no += 1
             self.servidor.rede.enviar(
                 fix_checksum(make_header(self.id_conexao[3], self.id_conexao[1], self.own_seq_no, self.own_ack_no, FLAGS_ACK),
                                 self.id_conexao[2], self.id_conexao[0]), self.id_conexao[0])
@@ -138,3 +137,4 @@ class Conexao:
         self.servidor.rede.enviar(
             fix_checksum(make_header(self.id_conexao[3], self.id_conexao[1], self.own_seq_no, self.own_ack_no, FLAGS_FIN),
                          self.id_conexao[2], self.id_conexao[0]), self.id_conexao[0])
+        del self.servidor.conexoes[self.id_conexao]
